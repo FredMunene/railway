@@ -34,6 +34,7 @@ contract MintEscrow is IMintEscrow, AccessControl, Pausable, ReentrancyGuard {
     error DailyLimitExceeded(uint256 requested, uint256 available);
     error CountryTokenNotConfigured(bytes32 countryCode);
     error TxRefAlreadyConsumed(bytes32 txRef);
+    error InvalidTxRef();
 
     event CountryTokenConfigured(bytes32 indexed countryCode, address indexed token, address indexed actor);
     event StablecoinUpdated(address indexed token, address indexed actor);
@@ -111,11 +112,52 @@ contract MintEscrow is IMintEscrow, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function submitIntent(
-        uint256,
-        bytes32,
-        bytes32
-    ) external pure override returns (bytes32) {
-        return bytes32(0);
+        uint256 amount,
+        bytes32 countryCode,
+        bytes32 txRef
+    ) external override nonReentrant whenNotPaused returns (bytes32) {
+        if (address(stablecoin) == address(0)) {
+            revert StablecoinNotSet();
+        }
+        if (address(userRegistry) == address(0)) {
+            revert UserRegistryNotSet();
+        }
+        if (amount < SeedConstants.MIN_MINT_AMOUNT || amount > SeedConstants.MAX_MINT_AMOUNT) {
+            revert InvalidAmount();
+        }
+        if (countryCode == bytes32(0)) {
+            revert InvalidCountryCode();
+        }
+        if (_countryTokens[countryCode] == address(0)) {
+            revert CountryTokenNotConfigured(countryCode);
+        }
+        if (txRef == bytes32(0)) {
+            revert InvalidTxRef();
+        }
+        if (_txRefConsumed[txRef]) {
+            revert TxRefAlreadyConsumed(txRef);
+        }
+
+        bytes32 intentId = keccak256(abi.encodePacked(msg.sender, amount, countryCode, txRef));
+        if (_intents[intentId].user != address(0)) {
+            revert IntentAlreadyExists();
+        }
+
+        stablecoin.safeTransferFrom(msg.sender, address(this), amount);
+
+        _txRefConsumed[txRef] = true;
+
+        _intents[intentId] = MintIntent({
+            user: msg.sender,
+            amount: amount,
+            countryCode: countryCode,
+            txRef: txRef,
+            timestamp: block.timestamp,
+            status: MintStatus.Pending
+        });
+
+        emit MintIntentSubmitted(intentId, msg.sender, amount, countryCode, txRef);
+        return intentId;
     }
 
     function executeMint(bytes32) external override {}
