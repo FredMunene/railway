@@ -1,0 +1,53 @@
+{
+  "_comment": "Per-candidate unique seed for Munene - MUST use these values in your implementation",
+  "candidateId": "Munene",
+  "chain": {
+    "chainId": 31430,
+    "rpcUrl": "http://localhost:8545",
+    "blockTime": 2
+  },
+  "tokens": {
+    "stablecoin": {
+      "symbol": "DAI",
+      "name": "Dai Stablecoin",
+      "decimals": 18
+    },
+    "country": {
+      "symbol": "KES",
+      "name": "Kenya Shilling Token",
+      "countryCode": "KES",
+      "decimals": 18
+    }
+  },
+  "secrets": {
+    "hmacSalt": "fiatrails_hmac_salt_8e29eb8ea24c6b2d",
+    "idempotencyKeySalt": "fiatrails_idem_salt_469c5e8ee1a6dcd7",
+    "mpesaWebhookSecret": "mpesa_webhook_secret_f23c1bc0945032a8"
+  },
+  "compliance": {
+    "maxRiskScore": 91,
+    "requireAttestation": true,
+    "minAttestationAge": 0
+  },
+  "limits": {
+    "minMintAmount": "1000000000000000000",
+    "maxMintAmount": "1000000000000000000000",
+    "dailyMintLimit": "10000000000000000000000"
+  },
+  "retry": {
+    "maxAttempts": 6,
+    "initialBackoffMs": 751,
+    "maxBackoffMs": 30000,
+    "backoffMultiplier": 2
+  },
+  "timeouts": {
+    "rpcTimeoutMs": 20109,
+    "webhookTimeoutMs": 3038,
+    "idempotencyWindowSeconds": 86400
+  },
+  "validation": {
+    "checksumHash": "0x5921aaceb2731e70",
+    "configVersion": "1.0.0",
+    "generatedAt": "2025-11-01T05:03:13.336Z"
+  }
+}
