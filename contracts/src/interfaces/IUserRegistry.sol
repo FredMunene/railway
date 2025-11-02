@@ -11,4 +11,6 @@ interface IUserRegistry {
         bytes32 attestationType,
         address actor
     ) external;
+
+    function isCompliant(address user) external view returns (bool);
 }
