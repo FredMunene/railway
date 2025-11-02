@@ -10,6 +10,10 @@ import {IMintEscrow} from "./IMintEscrow.sol";
 import {IUserRegistry} from "./interfaces/IUserRegistry.sol";
 import {SeedConstants} from "./utils/SeedConstants.sol";
 
+interface ICountryToken {
+    function mint(address to, uint256 amount) external;
+}
+
 /**
  * @title MintEscrow
  * @notice Escrow contract that holds USD stablecoin deposits and mints country tokens after compliance checks.
@@ -160,9 +164,57 @@ contract MintEscrow is IMintEscrow, AccessControl, Pausable, ReentrancyGuard {
         return intentId;
     }
 
-    function executeMint(bytes32) external override {}
+    function executeMint(bytes32 intentId) external override nonReentrant whenNotPaused onlyRole(EXECUTOR_ROLE) {
+        MintIntent storage intent = _intents[intentId];
+        if (intent.user == address(0)) {
+            revert IntentNotFound();
+        }
+        if (intent.status != MintStatus.Pending) {
+            revert IntentAlreadyExecuted();
+        }
+        if (!userRegistry.isCompliant(intent.user)) {
+            revert UserNotCompliant();
+        }
 
-    function refundIntent(bytes32, string calldata) external override {}
+        address tokenAddr = _countryTokens[intent.countryCode];
+        if (tokenAddr == address(0)) {
+            revert CountryTokenNotConfigured(intent.countryCode);
+        }
+
+        uint256 dayBucket = block.timestamp / 1 days;
+        uint256 available = _availableMintingCapacity(dayBucket);
+        if (intent.amount > available) {
+            revert DailyLimitExceeded(intent.amount, available);
+        }
+
+        intent.status = MintStatus.Executed;
+        dailyMinted[dayBucket] += intent.amount;
+
+        ICountryToken(tokenAddr).mint(intent.user, intent.amount);
+
+        emit MintExecuted(intentId, intent.user, intent.amount, intent.countryCode, intent.txRef);
+    }
+
+    function refundIntent(bytes32 intentId, string calldata reason)
+        external
+        override
+        nonReentrant
+        onlyRole(EXECUTOR_ROLE)
+    {
+        MintIntent storage intent = _intents[intentId];
+        if (intent.user == address(0)) {
+            revert IntentNotFound();
+        }
+        if (intent.status != MintStatus.Pending) {
+            revert IntentAlreadyExecuted();
+        }
+
+        intent.status = MintStatus.Refunded;
+
+        stablecoin.safeTransfer(intent.user, intent.amount);
+
+        emit MintRefunded(intentId, intent.user, intent.amount, reason);
+    }
 
     function getIntent(bytes32 intentId) external view override returns (MintIntent memory) {
         return _intents[intentId];
