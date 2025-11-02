@@ -63,3 +63,13 @@
   3. Moved the grant call outside the prank scope so it executes as the deploying test contract.
 - **Resolution:** Issued the `grantRole` call without `ADMIN` impersonation, allowing the default admin (test contract) to perform the action.
 - **Lesson learned:** Pay attention to who owns role-based privileges after deployment; pranking as a different account can unintentionally strip required permissions.
+
+### Challenge: Deployment script unable to write `deployments.json`
+- **Source file:** `contracts/script/DeployFiatRails.s.sol`
+- **Issue summary:** Running the Forge script on Anvil failed with `vm.writeFile` because Foundry disallowed writes to `deployments.json`.
+- **Debug steps:**
+  1. Inspected the stack trace to confirm the revert originated from `vm.writeFile`.
+  2. Recalled Foundry’s filesystem sandbox and added `fs_permissions` to `contracts/foundry.toml` granting read-write access to the project root.
+  3. Restarted Anvil for a clean fork and reran the script with the permission fix in place.
+- **Resolution:** Updated Foundry configuration and re-executed the script, producing `deployments.json` successfully.
+- **Lesson learned:** Forge scripts obey the same FS sandbox as tests; grant explicit `fs_permissions` before attempting to write artifacts like deployment manifests.
