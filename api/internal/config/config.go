@@ -77,6 +77,7 @@ type AppConfig struct {
 	Seed       SeedConfig
 	Deployment DeploymentConfig
 	Service    ServiceConfig
+	Retry      RetryConfig
 	Chain      ChainConfig
 }
 
@@ -85,6 +86,14 @@ type ServiceConfig struct {
 	HMACClockSkew        time.Duration
 	IdempotencyWindow    time.Duration
 	IdempotencyStorePath string
+	DLQPath              string
+}
+
+type RetryConfig struct {
+	MaxAttempts       int
+	InitialBackoff    time.Duration
+	MaxBackoff        time.Duration
+	BackoffMultiplier int
 }
 
 type ChainConfig struct {
@@ -95,6 +104,7 @@ type ChainConfig struct {
 const (
 	defaultSeedPath        = "../seed.json"
 	defaultDeploymentsPath = "../deployments.json"
+	defaultDLQPath         = "../dlq"
 )
 
 // Load aggregates configuration from disk and environment.
@@ -117,6 +127,14 @@ func Load() (*AppConfig, error) {
 		HMACClockSkew:        time.Duration(envOrInt("HMAC_CLOCK_SKEW_SECONDS", 60)) * time.Second,
 		IdempotencyWindow:    time.Duration(seedCfg.Timeouts.IdempotencyWindowSecs) * time.Second,
 		IdempotencyStorePath: envOr("IDEMPOTENCY_STORE_PATH", filepath.Join(os.TempDir(), "fiatrails-idem.json")),
+		DLQPath:              envOr("DLQ_PATH", defaultDLQPath),
+	}
+
+	retryCfg := RetryConfig{
+		MaxAttempts:       seedCfg.Retry.MaxAttempts,
+		InitialBackoff:    time.Duration(seedCfg.Retry.InitialBackoffMs) * time.Millisecond,
+		MaxBackoff:        time.Duration(seedCfg.Retry.MaxBackoffMs) * time.Millisecond,
+		BackoffMultiplier: seedCfg.Retry.BackoffMultiplier,
 	}
 
 	chainCfg := ChainConfig{
@@ -128,6 +146,7 @@ func Load() (*AppConfig, error) {
 		Seed:       *seedCfg,
 		Deployment: *deployCfg,
 		Service:    serviceCfg,
+		Retry:      retryCfg,
 		Chain:      chainCfg,
 	}, nil
 }
