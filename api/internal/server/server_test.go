@@ -239,6 +239,58 @@ func TestMpesaCallbackDLQOnFailure(t *testing.T) {
 	}
 }
 
+func TestHealthEndpoint(t *testing.T) {
+	cfg := &config.AppConfig{
+		Seed: config.SeedConfig{
+			Secrets: struct {
+				HMACSalt           string `json:"hmacSalt"`
+				IdempotencyKeySalt string `json:"idempotencyKeySalt"`
+				MpesaWebhookSecret string `json:"mpesaWebhookSecret"`
+			}{
+				HMACSalt:           "mint-secret",
+				MpesaWebhookSecret: "mpesa-secret",
+			},
+			Timeouts: struct {
+				RPCTimeoutMs          int `json:"rpcTimeoutMs"`
+				WebhookTimeoutMs      int `json:"webhookTimeoutMs"`
+				IdempotencyWindowSecs int `json:"idempotencyWindowSeconds"`
+			}{
+				IdempotencyWindowSecs: 60,
+			},
+		},
+		Service: config.ServiceConfig{
+			HTTPPort:          0,
+			HMACClockSkew:     time.Minute,
+			IdempotencyWindow: time.Minute,
+			DLQPath:           t.TempDir(),
+		},
+	}
+
+	store := &stubStore{}
+	srv := NewServer(cfg, escrow.FakeClient{}, store)
+	srv.dbHealthFn = store.Ping
+	srv.rpcHealthFn = func(ctx context.Context) error { return nil }
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal health: %v", err)
+	}
+	if resp.Status != "healthy" {
+		t.Fatalf("expected status healthy, got %s", resp.Status)
+	}
+}
+
 type stubEscrow struct {
 	executeHashes []string
 	executeErrs   []error
@@ -261,6 +313,16 @@ func (s *stubEscrow) ExecuteMint(context.Context, string) (escrow.ExecuteMintRes
 	}
 	return escrow.ExecuteMintResponse{TxHash: hash}, nil
 }
+
+func (s *stubEscrow) Ping(context.Context) error {
+	return nil
+}
+
+type stubStore struct{}
+
+func (stubStore) Get(context.Context, string) (*idempotency.Record, error) { return nil, nil }
+func (stubStore) Save(context.Context, string, idempotency.Record) error   { return nil }
+func (stubStore) Ping(context.Context) error                               { return nil }
 
 func computeSignatureForTest(secret, timestamp string, body []byte) string {
 	h := sha256Sum(secret, timestamp, body)

@@ -29,3 +29,7 @@ func fakeHash(input string) string {
 	sum := sha256.Sum256([]byte(input))
 	return "0x" + hex.EncodeToString(sum[:])
 }
+
+func (FakeClient) Ping(context.Context) error {
+	return nil
+}

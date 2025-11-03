@@ -54,6 +54,10 @@ func (p *PostgresStore) Close() {
 	}
 }
 
+func (p *PostgresStore) Ping(ctx context.Context) error {
+	return p.pool.Ping(ctx)
+}
+
 func (p *PostgresStore) Get(ctx context.Context, key string) (*Record, error) {
 	row := p.pool.QueryRow(ctx, `
 SELECT status_code, response, created_at, expires_at

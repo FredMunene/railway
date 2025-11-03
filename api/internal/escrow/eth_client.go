@@ -155,6 +155,14 @@ func (c *EthClient) ExecuteMint(ctx context.Context, intentID string) (ExecuteMi
 	return ExecuteMintResponse{TxHash: tx.Hash().Hex()}, nil
 }
 
+func (c *EthClient) Ping(ctx context.Context) error {
+	if c.client == nil {
+		return fmt.Errorf("rpc client not configured")
+	}
+	_, err := c.client.BlockNumber(ctx)
+	return err
+}
+
 func validateSubmitRequest(req SubmitIntentRequest) error {
 	if !common.IsHexAddress(req.UserAddress) {
 		return fmt.Errorf("invalid user address")

@@ -20,12 +20,15 @@ import (
 )
 
 type Server struct {
-	cfg        *config.AppConfig
-	escrow     escrow.Client
-	store      idempotency.Store
-	hmac       *hmacauth.Verifier
-	mpesaHMAC  *hmacauth.Verifier
-	httpServer *http.Server
+	cfg         *config.AppConfig
+	escrow      escrow.Client
+	store       idempotency.Store
+	hmac        *hmacauth.Verifier
+	mpesaHMAC   *hmacauth.Verifier
+	httpServer  *http.Server
+	metrics     *metricsRegistry
+	dbHealthFn  func(context.Context) error
+	rpcHealthFn func(context.Context) error
 }
 
 func NewServer(cfg *config.AppConfig, esc escrow.Client, store idempotency.Store) *Server {
@@ -41,16 +44,29 @@ func NewServer(cfg *config.AppConfig, esc escrow.Client, store idempotency.Store
 		TimestampHeader: "X-Request-Timestamp",
 	}
 
+	metrics := newMetricsRegistry()
+
 	s := &Server{
 		cfg:       cfg,
 		escrow:    esc,
 		store:     store,
 		hmac:      hmacVerifier,
 		mpesaHMAC: mpesaVerifier,
+		metrics:   metrics,
 	}
+
+	if checker, ok := store.(interface{ Ping(context.Context) error }); ok {
+		s.dbHealthFn = checker.Ping
+	}
+	if checker, ok := esc.(escrow.HealthChecker); ok {
+		s.rpcHealthFn = checker.Ping
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/mint-intents", s.hmac.Middleware(http.HandlerFunc(s.handleMintIntents)))
 	mux.Handle("/api/v1/callbacks/mpesa", s.mpesaHMAC.Middleware(http.HandlerFunc(s.handleMpesaCallback)))
+	mux.Handle("/api/v1/metrics", metrics.handler())
+	mux.HandleFunc("/api/v1/health", s.handleHealth)
 
 	s.httpServer = &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.Service.HTTPPort),
@@ -115,6 +131,7 @@ func (s *Server) handleMintIntents(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(existing.StatusCode)
 		_, _ = w.Write(existing.Response)
+		s.metrics.incMint("cached")
 		return
 	}
 
@@ -135,6 +152,7 @@ func (s *Server) handleMintIntents(w http.ResponseWriter, r *http.Request) {
 		TxRef:       payload.TxRef,
 	})
 	if err != nil {
+		s.metrics.incMint("failed")
 		http.Error(w, "failed to submit intent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -157,6 +175,7 @@ func (s *Server) handleMintIntents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write(b)
+	s.metrics.incMint("created")
 }
 
 func (s *Server) handleMpesaCallback(w http.ResponseWriter, r *http.Request) {
@@ -182,11 +201,13 @@ func (s *Server) handleMpesaCallback(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(existing.StatusCode)
 		_, _ = w.Write(existing.Response)
+		s.metrics.incCallback("cached")
 		return
 	}
 
 	txHash, err := s.executeMintWithRetry(ctx, payload.IntentID)
 	if err != nil {
+		s.metrics.incCallback("failed")
 		s.writeDLQ(payload, err)
 		http.Error(w, "failed to execute mint: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -210,6 +231,8 @@ func (s *Server) handleMpesaCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+	s.metrics.incCallback("processed")
+	s.updateDLQDepth()
 }
 
 func validateMintIntentRequest(req mintIntentRequest) error {
@@ -258,12 +281,15 @@ func (s *Server) executeMintWithRetry(ctx context.Context, intentID string) (str
 	for i := 1; i <= attempts; i++ {
 		resp, err := s.escrow.ExecuteMint(ctx, intentID)
 		if err == nil {
+			s.metrics.incRetry("success")
 			return resp.TxHash, nil
 		}
 		if !isRetryable(err) || i == attempts {
+			s.metrics.incRetry("failed")
 			return "", err
 		}
 
+		s.metrics.incRetry("retry")
 		sleep := backoff
 		if s.cfg.Retry.MaxBackoff > 0 && sleep > s.cfg.Retry.MaxBackoff {
 			sleep = s.cfg.Retry.MaxBackoff
@@ -327,6 +353,96 @@ func (s *Server) writeDLQ(payload mpesaCallbackRequest, execErr error) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		log.Printf("dlq write error: %v", err)
 	}
+
+	s.updateDLQDepth()
+}
+
+func (s *Server) updateDLQDepth() int {
+	depth := s.currentDLQDepth()
+	if s.metrics != nil {
+		s.metrics.setDLQDepth(depth)
+	}
+	return depth
+}
+
+func (s *Server) currentDLQDepth() int {
+	if s.cfg.Service.DLQPath == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(s.cfg.Service.DLQPath)
+	if err != nil {
+		log.Printf("dlq read error: %v", err)
+		return 0
+	}
+	return len(entries)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	overallHealthy := true
+
+	rpcInfo := struct {
+		Connected bool    `json:"connected"`
+		LatencyMs float64 `json:"latency_ms"`
+		Error     string  `json:"error,omitempty"`
+	}{}
+
+	if s.rpcHealthFn != nil {
+		start := time.Now()
+		rpcCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := s.rpcHealthFn(rpcCtx); err != nil {
+			rpcInfo.Connected = false
+			rpcInfo.Error = err.Error()
+			overallHealthy = false
+		} else {
+			rpcInfo.Connected = true
+			rpcInfo.LatencyMs = float64(time.Since(start).Microseconds()) / 1000.0
+		}
+	} else {
+		rpcInfo.Connected = true
+		rpcInfo.LatencyMs = 0
+	}
+
+	dbInfo := struct {
+		Connected bool   `json:"connected"`
+		Error     string `json:"error,omitempty"`
+	}{Connected: true}
+
+	if s.dbHealthFn != nil {
+		dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := s.dbHealthFn(dbCtx); err != nil {
+			dbInfo.Connected = false
+			dbInfo.Error = err.Error()
+			overallHealthy = false
+		}
+	}
+
+	queueDepth := s.updateDLQDepth()
+
+	status := "healthy"
+	if !overallHealthy {
+		status = "degraded"
+	}
+
+	resp := struct {
+		Status     string      `json:"status"`
+		RPC        interface{} `json:"rpc"`
+		Database   interface{} `json:"database"`
+		QueueDepth int         `json:"queue_depth"`
+	}{
+		Status:     status,
+		RPC:        rpcInfo,
+		Database:   dbInfo,
+		QueueDepth: queueDepth,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if !overallHealthy {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func requestIDMiddleware(next http.Handler) http.Handler {

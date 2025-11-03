@@ -10,6 +10,10 @@ type Client interface {
 	ExecuteMint(ctx context.Context, intentID string) (ExecuteMintResponse, error)
 }
 
+type HealthChecker interface {
+	Ping(ctx context.Context) error
+}
+
 type SubmitIntentRequest struct {
 	UserAddress string
 	Amount      string // decimal string in wei
