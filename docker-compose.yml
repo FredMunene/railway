@@ -1,0 +1,60 @@
+version: '3.9'
+
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    command: anvil --chain-id ${CHAIN_ID:-31430} --block-time 2 --port 8545 --host 0.0.0.0
+    ports:
+      - "8545:8545"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: fiatrails
+      POSTGRES_USER: fiatrails
+      POSTGRES_PASSWORD: fiatrails
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./api
+    environment:
+      API_HTTP_PORT: 3000
+      DATABASE_URL: postgres://fiatrails:fiatrails@postgres:5432/fiatrails?sslmode=disable
+      CHAIN_RPC_URL: http://anvil:8545
+      CHAIN_PRIVATE_KEY: ${CHAIN_PRIVATE_KEY}
+    volumes:
+      - ./seed.json:/seed.json:ro
+      - ./deployments.json:/deployments.json:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - anvil
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:

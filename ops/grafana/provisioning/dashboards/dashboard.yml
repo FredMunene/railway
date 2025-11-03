@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    orgId: 1
+
+providers:
+  - name: 'FiatRailsDashboards'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
