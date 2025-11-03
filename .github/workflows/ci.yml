@@ -53,7 +53,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install -g solhint
-      - run: solhint "contracts/src/**/*.sol"
+      - run: solhint "src/**/*.sol"
         working-directory: contracts
 
       - name: Build API Docker image
