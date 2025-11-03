@@ -31,6 +31,13 @@ jobs:
         working-directory: api
         run: go test ./...
 
+
+      - name: Install Foundry dependencies
+        working-directory: contracts
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 
+
+
       - name: Run gofmt check
         working-directory: api
         run: test -z "$(gofmt -l ./cmd ./internal)"
@@ -38,7 +45,7 @@ jobs:
       - name: Run forge tests
         working-directory: contracts
         run: |
-          forge coverage
+          forge test
           forge snapshot
 
       - name: Lint Solidity using solhint
