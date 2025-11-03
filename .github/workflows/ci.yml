@@ -27,12 +27,6 @@ jobs:
         working-directory: api
         run: go mod tidy
 
-      - name: Install Foundry dependencies
-        working-directory: contracts
-        run: |
-          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 
-          forge install foundry-rs/forge-std 
-
       - name: Run Go tests
         working-directory: api
         run: go test ./...
@@ -44,7 +38,7 @@ jobs:
       - name: Run forge tests
         working-directory: contracts
         run: |
-          forge test
+          forge coverage
           forge snapshot
 
       - name: Lint Solidity using solhint
