@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 /**
  * @title IMintEscrow
@@ -146,4 +146,3 @@ interface IMintEscrow {
      */
     function setStablecoin(address token) external;
 }
-
