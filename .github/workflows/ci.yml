@@ -52,7 +52,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install -g solhint@3.6.0
+      - run: npm install -g solhint
       - run: solhint "contracts/src/**/*.sol"
         working-directory: contracts
 
