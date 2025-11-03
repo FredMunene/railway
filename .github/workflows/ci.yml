@@ -27,11 +27,6 @@ jobs:
         working-directory: api
         run: go mod tidy
 
-      - name: Install Foundry dependencies
-        working-directory: contracts
-        run: |
-          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 
-
       - name: Run Go tests
         working-directory: api
         run: go test ./...
@@ -43,15 +38,16 @@ jobs:
       - name: Run forge tests
         working-directory: contracts
         run: |
-          forge test
+          forge coverage
           forge snapshot
 
       - name: Lint Solidity using solhint
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install -g solhint
+      - run: npm install -g solhint@3.6.0
       - run: solhint "contracts/src/**/*.sol"
+        working-directory: contracts
 
       - name: Build API Docker image
         run: docker build -t fiatrails-api ./api
