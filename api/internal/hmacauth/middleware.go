@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	headerSignature = "X-Request-Signature"
-	headerTimestamp = "X-Request-Timestamp"
+	defaultSignatureHeader = "X-Request-Signature"
+	defaultTimestampHeader = "X-Request-Timestamp"
 )
 
 var (
@@ -25,10 +25,12 @@ var (
 )
 
 type Verifier struct {
-	Secret   string
-	MaxSkew  time.Duration
-	Now      func() time.Time
-	BodyCopy bool
+	Secret          string
+	MaxSkew         time.Duration
+	Now             func() time.Time
+	BodyCopy        bool
+	SignatureHeader string
+	TimestampHeader string
 }
 
 func (v *Verifier) Middleware(next http.Handler) http.Handler {
@@ -46,11 +48,20 @@ func (v *Verifier) verify(r *http.Request) error {
 		return nil
 	}
 
-	sig := r.Header.Get(headerSignature)
+	sigHeader := v.SignatureHeader
+	if sigHeader == "" {
+		sigHeader = defaultSignatureHeader
+	}
+	tsHeaderName := v.TimestampHeader
+	if tsHeaderName == "" {
+		tsHeaderName = defaultTimestampHeader
+	}
+
+	sig := r.Header.Get(sigHeader)
 	if sig == "" {
 		return ErrMissingSignature
 	}
-	tsHeader := r.Header.Get(headerTimestamp)
+	tsHeader := r.Header.Get(tsHeaderName)
 	if tsHeader == "" {
 		return ErrMissingTimestamp
 	}
