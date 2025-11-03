@@ -11,7 +11,12 @@ import (
 // SeedConfig models the subset of values we need from seed.json.
 type SeedConfig struct {
 	CandidateID string `json:"candidateId"`
-	Tokens      struct {
+	Chain       struct {
+		ChainID   int64  `json:"chainId"`
+		RPCURL    string `json:"rpcUrl"`
+		BlockTime int    `json:"blockTime"`
+	} `json:"chain"`
+	Tokens struct {
 		Stablecoin struct {
 			Symbol   string `json:"symbol"`
 			Name     string `json:"name"`
@@ -72,6 +77,7 @@ type AppConfig struct {
 	Seed       SeedConfig
 	Deployment DeploymentConfig
 	Service    ServiceConfig
+	Chain      ChainConfig
 }
 
 type ServiceConfig struct {
@@ -79,6 +85,11 @@ type ServiceConfig struct {
 	HMACClockSkew        time.Duration
 	IdempotencyWindow    time.Duration
 	IdempotencyStorePath string
+}
+
+type ChainConfig struct {
+	RPCURL     string
+	PrivateKey string
 }
 
 const (
@@ -108,10 +119,16 @@ func Load() (*AppConfig, error) {
 		IdempotencyStorePath: envOr("IDEMPOTENCY_STORE_PATH", filepath.Join(os.TempDir(), "fiatrails-idem.json")),
 	}
 
+	chainCfg := ChainConfig{
+		RPCURL:     envOr("CHAIN_RPC_URL", seedCfg.Chain.RPCURL),
+		PrivateKey: envOr("CHAIN_PRIVATE_KEY", ""),
+	}
+
 	return &AppConfig{
 		Seed:       *seedCfg,
 		Deployment: *deployCfg,
 		Service:    serviceCfg,
+		Chain:      chainCfg,
 	}, nil
 }
 
