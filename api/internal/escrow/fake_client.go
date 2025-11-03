@@ -7,23 +7,7 @@ import (
 	"fmt"
 )
 
-// Client abstracts the on-chain escrow interaction.
-type Client interface {
-	SubmitIntent(ctx context.Context, req SubmitIntentRequest) (SubmitIntentResponse, error)
-}
-
-type SubmitIntentRequest struct {
-	UserAddress string
-	Amount      string
-	CountryCode string
-	TxRef       string
-}
-
-type SubmitIntentResponse struct {
-	IntentID string
-}
-
-// FakeClient is a temporary placeholder that mimics the escrow submit flow by hashing the payload.
+// FakeClient hashes the payload to deterministically emulate intent IDs in tests.
 type FakeClient struct{}
 
 func (FakeClient) SubmitIntent(_ context.Context, req SubmitIntentRequest) (SubmitIntentResponse, error) {
@@ -33,5 +17,6 @@ func (FakeClient) SubmitIntent(_ context.Context, req SubmitIntentRequest) (Subm
 	hash := sha256.Sum256([]byte(req.UserAddress + req.Amount + req.CountryCode + req.TxRef))
 	return SubmitIntentResponse{
 		IntentID: "0x" + hex.EncodeToString(hash[:]),
+		TxHash:   "",
 	}, nil
 }
