@@ -67,6 +67,7 @@ type mintIntentRequest struct {
 type mintIntentResponse struct {
 	IntentID string `json:"intentId"`
 	Status   string `json:"status"`
+	TxHash   string `json:"txHash,omitempty"`
 }
 
 func (s *Server) handleMintIntents(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +115,7 @@ func (s *Server) handleMintIntents(w http.ResponseWriter, r *http.Request) {
 	respBody := mintIntentResponse{
 		IntentID: result.IntentID,
 		Status:   "submitted",
+		TxHash:   result.TxHash,
 	}
 	b, _ := json.Marshal(respBody)
 

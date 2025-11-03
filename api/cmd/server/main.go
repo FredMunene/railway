@@ -24,7 +24,20 @@ func main() {
 		log.Fatalf("idempotency store error: %v", err)
 	}
 
-	apiServer := server.NewServer(cfg, escrow.FakeClient{}, store)
+	var escClient escrow.Client = escrow.FakeClient{}
+	if cfg.Chain.PrivateKey != "" {
+		ethClient, err := escrow.NewEthClient(context.Background(), escrow.EthClientConfig{
+			RPCURL:             cfg.Chain.RPCURL,
+			PrivateKeyHex:      cfg.Chain.PrivateKey,
+			ContractMintEscrow: cfg.Deployment.Contracts.MintEscrow,
+		})
+		if err != nil {
+			log.Fatalf("escrow client error: %v", err)
+		}
+		escClient = ethClient
+	}
+
+	apiServer := server.NewServer(cfg, escClient, store)
 
 	go func() {
 		if err := apiServer.Start(); err != nil {
