@@ -19,9 +19,22 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 
-	store, err := idempotency.NewFileStore(cfg.Service.IdempotencyStorePath)
-	if err != nil {
-		log.Fatalf("idempotency store error: %v", err)
+	var store idempotency.Store
+	var storeCloser func()
+
+	if cfg.Database.URL != "" {
+		pgStore, err := idempotency.NewPostgresStore(context.Background(), cfg.Database.URL)
+		if err != nil {
+			log.Fatalf("postgres store error: %v", err)
+		}
+		store = pgStore
+		storeCloser = pgStore.Close
+	} else {
+		fsStore, err := idempotency.NewFileStore(cfg.Service.IdempotencyStorePath)
+		if err != nil {
+			log.Fatalf("idempotency store error: %v", err)
+		}
+		store = fsStore
 	}
 
 	var escClient escrow.Client = escrow.FakeClient{}
@@ -52,4 +65,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Service.HMACClockSkew)
 	defer cancel()
 	_ = apiServer.Shutdown(ctx)
+	if storeCloser != nil {
+		storeCloser()
+	}
 }
