@@ -73,3 +73,33 @@
   3. Restarted Anvil for a clean fork and reran the script with the permission fix in place.
 - **Resolution:** Updated Foundry configuration and re-executed the script, producing `deployments.json` successfully.
 - **Lesson learned:** Forge scripts obey the same FS sandbox as tests; grant explicit `fs_permissions` before attempting to write artifacts like deployment manifests.
+
+### Challenge: Go toolchain blocked by snap confinement
+- **Source context:** Running `gofmt` / `go test` within `api/`
+- **Issue summary:** Both commands exited immediately with `snap-confine has elevated permissions and is not confined but should be`, preventing formatting and test execution.
+- **Debug steps:**
+  1. Captured the error output from `gofmt` and `go test` to confirm it originated from snap confinement rather than Go itself.
+  2. Re-ran the commands using the CLI's elevated execution option (`with_escalated_permissions: true`), which bypassed the sandbox restriction.
+  3. Ensured subsequent commands that touch the Go toolchain also request elevated permissions.
+- **Resolution:** Re-executed the tooling with elevated permissions; formatting and tests succeeded.
+- **Lesson learned:** In this environment, snap-managed binaries may require elevated execution; bake that into the workflow to avoid false failures.
+
+### Challenge: Ethereum helper missing `IsHexHash`
+- **Source file:** `api/internal/escrow/eth_client.go`
+- **Issue summary:** `go test` failed because `common.IsHexHash` does not exist in go-ethereum, causing a compile-time error.
+- **Debug steps:**
+  1. Reviewed go-ethereum's `common` package to confirm there is no `IsHexHash` helper.
+  2. Replaced the call with a lightweight length/prefix validation before converting to `common.Hash`.
+  3. Re-ran `gofmt` and the test suite to verify the fix.
+- **Resolution:** Implemented a manual hex-hash validation (`len == 66 && prefix 0x`) prior to `common.HexToHash`.
+- **Lesson learned:** Don't assume helper functions exist; when missing, add explicit validation instead of relying on unchecked conversions.
+
+### Challenge: HMAC tests referencing removed constants
+- **Source file:** `api/internal/hmacauth/middleware_test.go`
+- **Issue summary:** After refactoring the middleware to use configurable headers, tests still referenced the old `headerSignature` / `headerTimestamp` constants, causing compile errors.
+- **Debug steps:**
+  1. Observed compile failures pointing to undefined identifiers.
+  2. Updated tests to refer to `defaultSignatureHeader` / `defaultTimestampHeader` and verified the custom-header case used the new fields.
+  3. Formatted the file and reran unit tests successfully.
+- **Resolution:** Aligned the test references with the new constants.
+- **Lesson learned:** When renaming exported/const identifiers, update the companion tests immediately to avoid stale references.
