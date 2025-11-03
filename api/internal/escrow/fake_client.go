@@ -20,3 +20,12 @@ func (FakeClient) SubmitIntent(_ context.Context, req SubmitIntentRequest) (Subm
 		TxHash:   "",
 	}, nil
 }
+
+func (FakeClient) ExecuteMint(_ context.Context, intentID string) (ExecuteMintResponse, error) {
+	return ExecuteMintResponse{TxHash: fakeHash(intentID)}, nil
+}
+
+func fakeHash(input string) string {
+	sum := sha256.Sum256([]byte(input))
+	return "0x" + hex.EncodeToString(sum[:])
+}

@@ -134,6 +134,27 @@ func (c *EthClient) SubmitIntent(ctx context.Context, req SubmitIntentRequest) (
 	}, nil
 }
 
+func (c *EthClient) ExecuteMint(ctx context.Context, intentID string) (ExecuteMintResponse, error) {
+	if c.transacts == nil {
+		return ExecuteMintResponse{}, fmt.Errorf("client is read-only")
+	}
+	if len(intentID) != 66 || !strings.HasPrefix(intentID, "0x") {
+		return ExecuteMintResponse{}, fmt.Errorf("invalid intent id")
+	}
+
+	hash := common.HexToHash(intentID)
+
+	opts := *c.transacts
+	opts.Context = ctx
+
+	tx, err := c.contract.Transact(&opts, "executeMint", hash)
+	if err != nil {
+		return ExecuteMintResponse{}, fmt.Errorf("execute mint tx: %w", err)
+	}
+
+	return ExecuteMintResponse{TxHash: tx.Hash().Hex()}, nil
+}
+
 func validateSubmitRequest(req SubmitIntentRequest) error {
 	if !common.IsHexAddress(req.UserAddress) {
 		return fmt.Errorf("invalid user address")
