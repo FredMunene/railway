@@ -45,3 +45,21 @@ After a successful run the script writes a JSON summary (default `deployments.js
 ```
 
 Adjust `DEPLOYMENTS_PATH` if you need to store multiple environment snapshots (e.g., `out/deployments/anvil.json`). Use the generated file as the single source of truth for off-chain services.
+
+## Docker Compose stack
+
+For local end-to-end testing with Postgres, Anvil, Prometheus, and Grafana:
+
+```bash
+export CHAIN_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+docker compose up --build
+```
+
+The compose file exposes:
+- API at `http://localhost:3000` (mint/ callbacks/ health/ metrics)
+- Postgres on `localhost:5432`
+- Prometheus at `http://localhost:9090`
+- Grafana at `http://localhost:3001` (admin / admin)
+- Anvil RPC at `http://localhost:8545`
+
+Place `seed.json` and `deployments.json` alongside `docker-compose.yml` so the API container can mount them read-only.
