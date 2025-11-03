@@ -38,7 +38,7 @@ jobs:
       - name: Run forge tests
         working-directory: contracts
         run: |
-          forge --coverage
+          forge test
           forge snapshot
 
       - name: Lint Solidity using solhint
