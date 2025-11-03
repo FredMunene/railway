@@ -2,6 +2,8 @@
 
 FROM golang:1.22 as builder
 
+ENV GOTOOLCHAIN=auto
+
 WORKDIR /app
 
 COPY go.mod go.sum ./

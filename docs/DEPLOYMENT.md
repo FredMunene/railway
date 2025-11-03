@@ -63,3 +63,5 @@ The compose file exposes:
 - Anvil RPC at `http://localhost:8545`
 
 Place `seed.json` and `deployments.json` alongside `docker-compose.yml` so the API container can mount them read-only.
+
+> Tip: the compose stack expects `CHAIN_PRIVATE_KEY` to be set in the environment (or a `.env` file) before launch. Without it the API container will start in read-only escrow mode and callbacks will fail when attempting to execute mints.
