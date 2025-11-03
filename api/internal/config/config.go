@@ -79,6 +79,7 @@ type AppConfig struct {
 	Service    ServiceConfig
 	Retry      RetryConfig
 	Chain      ChainConfig
+	Database   DatabaseConfig
 }
 
 type ServiceConfig struct {
@@ -99,6 +100,10 @@ type RetryConfig struct {
 type ChainConfig struct {
 	RPCURL     string
 	PrivateKey string
+}
+
+type DatabaseConfig struct {
+	URL string
 }
 
 const (
@@ -142,12 +147,17 @@ func Load() (*AppConfig, error) {
 		PrivateKey: envOr("CHAIN_PRIVATE_KEY", ""),
 	}
 
+	dbCfg := DatabaseConfig{
+		URL: envOr("DATABASE_URL", ""),
+	}
+
 	return &AppConfig{
 		Seed:       *seedCfg,
 		Deployment: *deployCfg,
 		Service:    serviceCfg,
 		Retry:      retryCfg,
 		Chain:      chainCfg,
+		Database:   dbCfg,
 	}, nil
 }
 
