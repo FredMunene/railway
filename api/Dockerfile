@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.22 as builder
+FROM golang:1.25.3 as builder
 
 ENV GOTOOLCHAIN=auto
 
