@@ -30,19 +30,11 @@ jobs:
       - name: Install Foundry dependencies
         working-directory: contracts
         run: |
-          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-commit
-          forge install foundry-rs/forge-std --no-commit
+          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 
 
       - name: Run Go tests
         working-directory: api
         run: go test ./...
-
-
-      - name: Install Foundry dependencies
-        working-directory: contracts
-        run: |
-          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 
-
 
       - name: Run gofmt check
         working-directory: api
