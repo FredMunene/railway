@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
-**Candidate:** [Your Candidate ID]  
-**Date:** [Submission Date]  
+**Candidate:** Munene  
+**Date:** 2025-11-02  
 **Version:** 1.0
 
 ---
@@ -10,45 +10,58 @@
 
 ### Context
 
-FiatRails contracts must be upgradeable to fix bugs and add features post-deployment. Several patterns exist: UUPS, Transparent Proxy, Beacon, or Diamond.
+FiatRails must be able to evolve compliance controls after deployment. We reviewed UUPS, Transparent Proxy, Beacon, and Diamond patterns for the one contract that needs runtime upgrades (`ComplianceManager`). Operational contracts that hold user funds (`MintEscrow`, token contracts, `UserRegistry`) stay immutable to keep the surface for governance mistakes small.
 
 ### Decision
 
-**Pattern Chosen:** [UUPS / Transparent / Other]
+**Pattern Chosen:** UUPS (Universal Upgradeable Proxy Standard)
 
 ### Rationale
 
-[Explain your choice]
+- Leverages OpenZeppelin’s audited `UUPSUpgradeable` mixin with minimal boilerplate.
+- Keeps proxy storage lean and gas costs lower than Transparent proxies.
+- Gives explicit hooks (`_authorizeUpgrade`) to restrict upgrade authority to governance.
 
 **Pros:**
-- 
-- 
-- 
+- Minimal proxy storage and gas overhead.
+- Reuses well-understood OZ components already in the codebase.
+- Upgrade authorization lives in the implementation contract, simplifying tooling.
 
 **Cons:**
-- 
-- 
+- Any bug in `_authorizeUpgrade` could brick the proxy.
+- Requires strict initializer hygiene to avoid leaving implementation mutable.
 
 ### Trade-offs Considered
 
-| Pattern | Gas Cost | Admin Key Risk | Complexity | Chosen? |
-|---------|----------|----------------|------------|---------|
-| UUPS | Lower | Higher (logic holds upgrade) | Medium | ? |
-| Transparent | Higher | Lower (proxy holds upgrade) | Low | ? |
-| Beacon | Medium | Medium | High | ? |
+| Pattern     | Gas Cost | Admin Key Risk                         | Complexity | Chosen? |
+|-------------|----------|----------------------------------------|------------|---------|
+| UUPS        | Low      | Medium (logic contract holds gate)     | Medium     | Yes     |
+| Transparent | Medium   | Low (proxy admin contract)             | Low        | No      |
+| Beacon      | Medium   | Medium                                 | High       | No      |
 
 ### How Misuse is Prevented
 
-[How do you prevent bricking the contract? e.g., `_disableInitializers()`, `onlyProxy` modifier, storage gap]
+- Constructors call `_disableInitializers()` so logic contracts cannot be reinitialized.
+- `_authorizeUpgrade` enforces the `UPGRADER_ROLE`; only governance-approved addresses can upgrade.
+- The initializer wires roles once and requires a non-zero admin and registry, preventing half-initialized deployments.
 
 ```solidity
-// Example code showing your protection mechanism
+constructor() {
+    _disableInitializers();
+}
+
+function _authorizeUpgrade(address newImplementation)
+    internal
+    override
+    onlyRole(UPGRADER_ROLE)
+{}
 ```
 
 ### References
 
-- OpenZeppelin UUPS: https://docs.openzeppelin.com/contracts/4.x/api/proxy#UUPSUpgradeable
-- [Any other resources you consulted]
+- contracts/src/ComplianceManager.sol:12  
+- contracts/src/IComplianceManager.sol:10  
+- docs/RUNBOOK.md:88
 
 ---
 
@@ -56,45 +69,43 @@ FiatRails contracts must be upgradeable to fix bugs and add features post-deploy
 
 ### Context
 
-Events must enable off-chain indexers to reconstruct system state without RPC calls for historical blocks.
+Our indexer and reporting pipelines reconstruct compliance state and mint history directly from logs. Events must support lookups by user, intent, and geography without bloating gas usage.
 
 ### Decision
 
-**Indexed Fields Strategy:** [Describe which fields are indexed and why]
+**Indexed Fields Strategy:** Index identifiers (`intentId`, `user`, `countryCode`) and leave wide or mostly unique values (`amount`, `txRef`) unindexed.
 
 ```solidity
 event MintExecuted(
     bytes32 indexed intentId,
     address indexed user,
-    uint256 amount,            // Not indexed - why?
+    uint256 amount,
     bytes32 indexed countryCode,
-    bytes32 txRef              // Not indexed - why?
+    bytes32 txRef
 );
 ```
 
 ### Rationale
 
 **Why These Fields Indexed:**
-- `intentId`: [Reason]
-- `user`: [Reason]
-- `countryCode`: [Reason]
+- `intentId`: correlate on-chain executions to API requests and callbacks.
+- `user`: power user-centric dashboards and AML investigations.
+- `countryCode`: aggregate per token/country for treasury reconciliation.
 
 **Why These NOT Indexed:**
-- `amount`: [Reason]
-- `txRef`: [Reason]
+- `amount`: wide numeric range; filters are rare and the topic would add ~375 gas.
+- `txRef`: unique per payment. We retain it in the data payload for audits but indexing offers little reuse.
 
 ### Indexer Requirements
 
-An indexer should be able to:
-1. [Capability 1, e.g., "Get all mints for a user"]
-2. [Capability 2, e.g., "Track mints by country"]
-3. [Capability 3, e.g., "Reconstruct user risk score history"]
+1. Pull all mint executions and refunds for a given wallet quickly.
+2. Aggregate mint volume and refund rate per `countryCode`.
+3. Track risk-score audit trail via `UserRiskUpdated` and `AttestationRecorded`.
 
 ### Trade-offs
 
-- **Gas:** Each indexed field adds ~375 gas
-- **Query flexibility:** More indexed fields = more query options
-- **Storage:** Topic filters are cheap, but more events = more logs
+- Three indexed topics keep gas reasonable while supporting the key query dimensions.
+- Leaving `amount` and `txRef` in the data payload avoids extra topic fan-out and keeps filters simple.
 
 ---
 
@@ -102,48 +113,42 @@ An indexer should be able to:
 
 ### Context
 
-API must prevent duplicate operations when:
-- Client retries failed requests
-- Webhooks are delivered multiple times
-- RPC nonce issues cause transaction resubmission
+HTTP clients and webhook providers retry aggressively. We must guarantee that duplicate submissions do not double-mint or issue extra refunds, even when callbacks race or infrastructure restarts mid-flight.
 
 ### Decision
 
-**Deduplication Key:** [Format, e.g., "SHA256(user + txRef + amount)"]
-
-**Storage:** [Database choice and schema]
+- **Deduplication Key:**  
+  - `/api/v1/mint-intents`: caller-provided `X-Idempotency-Key`.  
+  - `/api/v1/callbacks/mpesa`: namespaced payment reference `mpesa:<txRef>`.
+- **Storage:** PostgreSQL table `idempotency_records`; if the DSN is empty the API falls back to a JSON-backed `FileStore` for local dev.
+- **TTL:** 24 hours, derived from `timeouts.idempotencyWindowSeconds` (86,400 seconds) in `seed.json`.
 
 ```sql
--- Example schema
-CREATE TABLE idempotency_keys (
-    key VARCHAR(128) PRIMARY KEY,
-    response_status INT,
-    response_body TEXT,
-    created_at TIMESTAMP,
-    expires_at TIMESTAMP
+CREATE TABLE IF NOT EXISTS idempotency_records (
+    key TEXT PRIMARY KEY,
+    status_code INT NOT NULL,
+    response BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
 );
 ```
 
-**TTL:** [How long keys are retained, from seed.json]
-
 ### Rationale
 
-**Why This Key Format:**
-- 
-
-**Why This TTL:**
-- 
+- Using the client-provided header keeps `/mint-intents` compatible with standard API clients (Stripe style). Namespacing M-PESA references avoids collisions with user-provided keys.
+- PostgreSQL gives durable, ACID semantics that survive process restarts and support multiple API replicas.
+- The 24-hour TTL covers all retry windows required by partner SLAs while bounding table growth.
 
 ### Edge Cases Handled
 
-1. **Concurrent requests with same key:** [How handled? Row lock? Compare-and-swap?]
-2. **Expired keys:** [Cleanup strategy? Background job?]
-3. **Database failure:** [Fallback behavior?]
+1. **Concurrent requests with same key:** Reads hit the store before work; once the first response is saved, later requests reuse the cached payload. PostgreSQL’s `ON CONFLICT` upsert keeps the row consistent.
+2. **Expired keys:** `Get` checks `expires_at`; expired rows return `nil` and are pruned asynchronously (PostgreSQL) or immediately (file store) before returning.
+3. **Database failure:** If Postgres cannot be reached at boot, the API logs the failure and initializes the file-backed store so retries remain safe, albeit without cross-instance sharing.
 
-### Alternative Considered
+### Alternatives Considered
 
-- Redis with TTL: [Why rejected or chosen?]
-- In-memory cache: [Why rejected?]
+- **Redis with TTL:** rejected because the local stack already ships with Postgres and Redis would add another service plus persistence concerns.
+- **In-memory cache:** rejected; would lose dedup history on restart and offers no protection in multi-instance deployments.
 
 ---
 
@@ -151,41 +156,40 @@ CREATE TABLE idempotency_keys (
 
 ### Context
 
-System requires multiple secrets:
-- HMAC secret for request signing
-- RPC private key for transaction signing
-- M-PESA webhook secret
+The system relies on multiple secrets: HMAC salts for clients, the webhook secret from M-PESA, and the Ethereum signer private key. These must be rotated without exposing them or requiring code changes.
 
 ### Decision
 
-**Storage:** [Environment variables / HashiCorp Vault / AWS Secrets Manager / other]
+**Storage:** Environment variables injected via Docker Compose locally and secrets manager (GitHub Actions secrets / future Vault) in production. `config.Load` reads them at startup and never persists them.
 
-**Rotation Strategy:** [How secrets are rotated without downtime]
+**Rotation Strategy:** Update the secret source (secret manager or `.env`), restart the API container, and verify new signatures with a health probe.
 
 ### Rationale
 
 **For Production:**
-- 
+- Works with any secret manager that can project env vars (AWS Secrets Manager, Vault, SSM) without coupling code to a specific provider.
+- Keeps secrets out of the filesystem and process arguments; rotates via rolling restarts.
 
 **For This Trial:**
-- 
+- `.env` is ignored by Git (`.gitignore`) and only loaded locally.
+- Docker Compose examples document required variables; CI pulls them from repository secrets.
 
 ### Rotation Procedure (from RUNBOOK)
 
 ```bash
-# Example rotation command
-./scripts/rotate-secret.sh hmac
+# Update secret store and redeploy API
+docker compose up -d api
 ```
 
-1. [Step 1]
-2. [Step 2]
-3. [Verification]
+1. Generate new secret and update the relevant env var (`HMAC_SALT`, `MPESA_WEBHOOK_SECRET`, `CHAIN_PRIVATE_KEY`).
+2. Restart the API (Compose, systemd, or CI deployment).
+3. Send a signed canary request with the new secret to confirm success, then revoke the old secret from clients.
 
 ### Security Considerations
 
-- Secrets never logged: [How ensured?]
-- Secrets never in Git: [How ensured?]
-- Secrets scoped per environment: [How managed?]
+- Secrets never logged: verification middleware returns generic 401s and does not print secrets.
+- Secrets never in Git: `.env` is ignored and docs instruct using env injection; seed values are examples only.
+- Secrets scoped per environment: Compose/CI use different env files; production can supply unique salts and keys through the orchestrator.
 
 ---
 
@@ -193,7 +197,7 @@ System requires multiple secrets:
 
 ### Context
 
-RPC calls may fail transiently (network issues, rate limits, mempool full). System must retry without causing cascading failures.
+RPC calls to execute mints can fail transiently (nonce errors, network blips). The callback handler must retry without overloading the node or duplicating side effects.
 
 ### Decision
 
@@ -201,46 +205,46 @@ RPC calls may fail transiently (network issues, rate limits, mempool full). Syst
 ```json
 {
   "retry": {
-    "maxAttempts": <your value>,
-    "initialBackoffMs": <your value>,
-    "maxBackoffMs": <your value>,
-    "backoffMultiplier": <your value>
+    "maxAttempts": 6,
+    "initialBackoffMs": 751,
+    "maxBackoffMs": 30000,
+    "backoffMultiplier": 2
   }
 }
 ```
 
-**Backoff Formula:** `min(initialBackoff * (multiplier ^ attempt), maxBackoff) + jitter`
+**Backoff Formula:** `min(backoff * multiplier^(attempt-1), maxBackoff)`
 
-**Jitter:** [How much randomness added to prevent thundering herd?]
+**Jitter:** Not yet applied; tracked as a follow-up to add ±10% jitter once we integrate distributed queues.
 
 ### Rationale
 
-**Why These Values:**
-- Max attempts: [Reasoning]
-- Initial backoff: [Reasoning]
-- Multiplier: [Reasoning]
+- **Max attempts (6):** Covers roughly 2.5 minutes of retries, long enough for brief RPC hiccups without holding webhooks indefinitely.
+- **Initial backoff (751 ms):** Aligns with seed config; keeps immediate retries snappy while spacing them out exponentially.
+- **Multiplier (2) and cap (30s):** Doubles wait each time but caps to avoid multi-minute delays; prevents thundering herd when many callbacks arrive.
 
 ### Dead-Letter Queue Trigger
 
-After `maxAttempts`, operation goes to DLQ for manual review.
+After all attempts fail, the payload is serialized to `dlq/<timestamp>-<txRef>.json` for manual remediation.
 
-**DLQ Format:**
 ```json
 {
-  "operation": "executeMint",
-  "intentId": "0x...",
-  "attempts": 5,
-  "lastError": "...",
-  "timestamp": "..."
+  "timestamp": "2025-11-02T08:15:30Z",
+  "payload": {
+    "intentId": "0x...",
+    "txRef": "MPESA123",
+    "userAddress": "0x...",
+    "amount": "1000000000000000000"
+  },
+  "error": "execute mint tx: nonce too low"
 }
 ```
 
 ### Recovery
 
-DLQ items are:
-- [Automatically retried after X time?]
-- [Manually reviewed and replayed?]
-- [Alerted to on-call?]
+- DLQ items are manually reviewed via the runbook, corrected, and replayed with `curl`.
+- Grafana dashboard tracks DLQ depth; alerts fire when depth > 0 (planned).
+- No automatic replays yet—operators decide whether to retry, refund, or escalate.
 
 ---
 
@@ -248,52 +252,59 @@ DLQ items are:
 
 ### Context
 
-API needs persistent storage for idempotency keys and DLQ.
+We need durable storage for idempotency responses and potentially for DLQ metadata. The system should run locally without heavy setup but be production-ready.
 
 ### Decision
 
-**Database:** [PostgreSQL / SQLite / MongoDB / other]
+**Database:** PostgreSQL (via Docker Compose) with a file-backed fallback for single-node development.
 
 ### Rationale
 
-**Why This Database:**
-- 
-- 
+- PostgreSQL brings ACID guarantees, row-level locks, and rich observability to share state across API replicas.
+- Compose already provisions Postgres; leveraging it avoids managing another service while staying production-aligned.
 
 **Schema:**
 ```sql
--- Tables here
+CREATE TABLE IF NOT EXISTS idempotency_records (
+    key TEXT PRIMARY KEY,
+    status_code INT NOT NULL,
+    response BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
 ```
 
 ### Alternatives Considered
 
-| Database | Pros | Cons | Chosen? |
-|----------|------|------|---------|
-| PostgreSQL | ACID, mature | Heavier | ? |
-| SQLite | Simple, embedded | Single-writer limit | ? |
-| Redis | Fast, TTL built-in | Not durable by default | ? |
+| Database | Pros                         | Cons                             | Chosen? |
+|----------|------------------------------|----------------------------------|---------|
+| PostgreSQL | Durable, concurrent writers | Requires managed service         | Yes     |
+| SQLite   | Embedded, zero external deps | Single-writer bottleneck; no HA | No      |
+| Redis    | Fast, built-in TTL           | Persistence optional, extra ops | No      |
 
 ---
 
 ## Summary Table
 
-| Decision | Choice | Key Trade-off |
-|----------|--------|---------------|
-| Upgradeability | [Pattern] | [Gas vs security] |
-| Event Indexing | [Strategy] | [Gas vs queryability] |
-| Idempotency | [Key format + storage] | [Complexity vs reliability] |
-| Key Management | [Storage method] | [Security vs ops overhead] |
-| Retry Logic | [Backoff params] | [Latency vs resilience] |
-| Database | [DB choice] | [Simplicity vs scale] |
+| Decision        | Choice                                  | Key Trade-off                          |
+|-----------------|-----------------------------------------|----------------------------------------|
+| Upgradeability  | UUPS for `ComplianceManager`            | Gas efficiency vs. upgrade gate safety |
+| Event Indexing  | intentId/user/country indexed           | Gas savings vs. query flexibility      |
+| Idempotency     | Header key + PostgreSQL store (24h TTL) | Operational cost vs. reliability       |
+| Key Management  | Environment variables + documented ops  | Ease of use vs. enforced rotation      |
+| Retry Logic     | 6-attempt exponential backoff (no jitter yet) | Latency vs. resilience            |
+| Database        | PostgreSQL with dev file fallback       | Durability vs. setup complexity        |
 
 ---
 
 ## Notes for Reviewers
 
-[Any additional context, assumptions, or known limitations]
+- Retry jitter is pending; tracked to add randomness before multi-node rollout.
+- MintEscrow currently relies on governance for upgrades; if requirements change we can wrap it in a proxy with the same pattern.
+- `SeedConstants` capture the seed values at build time; regenerate if the seed changes to keep contracts aligned.
 
 ---
 
-**Signed:** [Your Name]  
-**Date:** [Date]
+**Signed:** Munene  
+**Date:** 2025-11-02
 
