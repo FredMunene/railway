@@ -27,16 +27,14 @@ jobs:
         working-directory: api
         run: go mod tidy
 
-      - name: Run Go tests
-        working-directory: api
-        run: go test ./...
-
-
       - name: Install Foundry dependencies
         working-directory: contracts
         run: |
           forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 
 
+      - name: Run Go tests
+        working-directory: api
+        run: go test ./...
 
       - name: Run gofmt check
         working-directory: api

@@ -1,4 +1,8 @@
 .env
+contracts/lib/
+contracts/.gas-snapshot
 **/lib/
 **/out/
 contracts/.solhintignore
+exclude/
+
